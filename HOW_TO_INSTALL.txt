@@ -6,9 +6,11 @@
   ENGLISH
 --------------------------------------------------------------------
 Option 1 — Unverum (Recommended)
-1. Download Battle-Fatigue-Low-HP-Stance-v1.1.0.zip.
-2. Drag and drop the .zip into Unverum.
-3. Enable Battle Fatigue (Low HP Stance) and click Launch Game.
+1. Make sure you have Unverum installed:
+   https://gamebanana.com/tools/18251
+2. Download Battle-Fatigue-Low-HP-Stance-v1.1.0.zip.
+3. Drag and drop the .zip into Unverum.
+4. Enable Battle Fatigue (Low HP Stance) and click Launch Game.
 
 Option 2 — Manual (UE4SS)
 1. Make sure UE4SS (v3.0+) is installed in SparkingZERO\Binaries\Win64\.
@@ -20,9 +22,11 @@ Option 2 — Manual (UE4SS)
   PORTUGUÊS (PT-BR)
 --------------------------------------------------------------------
 Opção 1 — Unverum (Recomendado)
-1. Baixe o arquivo Battle-Fatigue-Low-HP-Stance-v1.1.0.zip.
-2. Arraste e solte o .zip dentro do Unverum.
-3. Marque Battle Fatigue (Low HP Stance) e clique em Launch Game.
+1. Certifique-se de ter o Unverum instalado:
+   https://gamebanana.com/tools/18251
+2. Baixe o arquivo Battle-Fatigue-Low-HP-Stance-v1.1.0.zip.
+3. Arraste e solte o .zip dentro do Unverum.
+4. Marque Battle Fatigue (Low HP Stance) e clique em Launch Game.
 
 Opção 2 — Manual (UE4SS)
 1. Certifique-se de que o UE4SS (v3.0+) está instalado em:
@@ -35,9 +39,11 @@ Opção 2 — Manual (UE4SS)
   ESPAÑOL
 --------------------------------------------------------------------
 Opción 1 — Unverum (Recomendado)
-1. Descarga Battle-Fatigue-Low-HP-Stance-v1.1.0.zip.
-2. Arrastra y suelta el archivo .zip dentro de Unverum.
-3. Activa Battle Fatigue (Low HP Stance) y haz clic en Launch Game.
+1. Asegúrate de tener Unverum instalado:
+   https://gamebanana.com/tools/18251
+2. Descarga Battle-Fatigue-Low-HP-Stance-v1.1.0.zip.
+3. Arrastra y suelta el archivo .zip dentro de Unverum.
+4. Activa Battle Fatigue (Low HP Stance) y haz clic en Launch Game.
 
 Opción 2 — Manual (UE4SS)
 1. Asegúrate de tener UE4SS (v3.0+) instalado en:
