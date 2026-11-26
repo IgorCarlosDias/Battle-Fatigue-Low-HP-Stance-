@@ -1,4 +1,4 @@
--- Battle Fatigue (Low HP Stance) - Configuration
+-- Battle Fatigue (Low HP Stance) - Configuration v1.1.0
 -- Edit any value below and press F8 in-game to hot-reload without restarting.
 
 local config = {
@@ -25,19 +25,16 @@ local config = {
     maxInputMagnitude = 0.05,
 
     -- Stabilization delay (seconds) after stopping movement before showing exhausted stance
-    -- Prevents interfering with landing/descent/action exit frames
-    idleDelaySec = 0.15,
+    -- Short enough to feel responsive while preventing interference with action exit frames
+    idleDelaySec = 0.08,
 
     -- Extra stabilization delay (seconds) after air/ground or DashUpDown/Jump transitions
-    airTransitionDelaySec = 0.30,
-
-    -- Main check interval in milliseconds (33ms = ~30Hz, negligible CPU cost)
-    checkIntervalMs = 33,
+    airTransitionDelaySec = 0.25,
 
     -- Enable live hotkeys: F7 (Toggle), F8 (Hot-Reload), F9 (Diagnostic Dump)
     enableHotkeys = true,
 
-    -- Diagnostic logging (keep false for zero disk writes during normal play)
+    -- Diagnostic logging (keep false for zero disk writes and zero history overhead during normal play)
     logDebug = false,
     -- Leave empty ("") to use %TEMP%\BattleFatigue.log when logDebug = true
     logFile = ""

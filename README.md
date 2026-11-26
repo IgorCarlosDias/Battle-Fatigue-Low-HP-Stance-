@@ -46,7 +46,7 @@ O mod **Battle Fatigue** traz essa imersão de volta: quando qualquer lutador en
 ## 🛠️ Installation / Instalação
 
 ### Option 1 — Unverum (Recommended / 1-Click)
-1. Download `Battle-Fatigue-Low-HP-Stance-v1.0.1.zip`.
+1. Download `Battle-Fatigue-Low-HP-Stance-v1.1.0.zip`.
 2. Drag and drop the `.zip` file directly into your **Unverum** window.
 3. Check **Battle Fatigue (Low HP Stance)** and click **Launch Game**.
 

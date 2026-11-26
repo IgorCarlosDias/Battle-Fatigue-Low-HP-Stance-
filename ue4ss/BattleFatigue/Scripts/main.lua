@@ -1,4 +1,5 @@
--- Battle Fatigue (Low HP Stance) - Main Entry Point v1.0.1
+-- Battle Fatigue (Low HP Stance) - Main Entry Point v1.1.0
+-- 100% Game-Thread driven (zero LoopAsync threads, zero mutex contention).
 -- Hotkeys (when config.enableHotkeys = true):
 --   F7 = Toggle Battle Fatigue ON/OFF live
 --   F8 = Hot-Reload config.lua & fatigue_controller.lua live (no game restart)
@@ -7,12 +8,8 @@
 local config = require("config")
 local controller = require("fatigue_controller")
 
-local generation = 1
-
 local function startController()
-    local ok, err = pcall(function()
-        controller.init()
-    end)
+    local ok, err = pcall(controller.init)
     if not ok then
         print("[BattleFatigue INIT ERROR] " .. tostring(err))
     end
@@ -20,27 +17,12 @@ end
 
 startController()
 
--- Lightweight Game-Thread safe update loop
-LoopAsync(config.checkIntervalMs or 33, function()
-    local myGen = generation
-    ExecuteInGameThread(function()
-        if myGen ~= generation then return end
-        local ok, err = pcall(function()
-            controller.tick()
-        end)
-        if not ok then
-            print("[BattleFatigue TICK ERROR] " .. tostring(err))
-        end
-    end)
-    return false
-end)
-
 if config.enableHotkeys ~= false then
     -- F7: Toggle mod ON/OFF live
     pcall(function()
         RegisterKeyBind(Key.F7, function()
             ExecuteInGameThread(function()
-                pcall(function() controller.toggleEnabled() end)
+                pcall(controller.toggleEnabled)
             end)
         end)
     end)
@@ -50,8 +32,7 @@ if config.enableHotkeys ~= false then
         RegisterKeyBind(Key.F8, function()
             ExecuteInGameThread(function()
                 print("[BattleFatigue] Hot-reloading scripts...")
-                pcall(function() controller.unregisterHooks() end)
-                generation = generation + 1
+                pcall(controller.unregisterHooks)
                 package.loaded["config"] = nil
                 package.loaded["fatigue_controller"] = nil
                 local okCfg, newCfg = pcall(require, "config")
@@ -72,7 +53,7 @@ if config.enableHotkeys ~= false then
     pcall(function()
         RegisterKeyBind(Key.F9, function()
             ExecuteInGameThread(function()
-                pcall(function() controller.dumpDiagnostics("F9-hotkey") end)
+                pcall(controller.dumpDiagnostics, "F9-hotkey")
             end)
         end)
     end)
