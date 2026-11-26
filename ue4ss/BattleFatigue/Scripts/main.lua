@@ -1,4 +1,4 @@
--- Battle Fatigue (Low HP Stance) - Main Entry Point v1.0.0
+-- Battle Fatigue (Low HP Stance) - Main Entry Point v1.0.1
 -- Hotkeys (when config.enableHotkeys = true):
 --   F7 = Toggle Battle Fatigue ON/OFF live
 --   F8 = Hot-Reload config.lua & fatigue_controller.lua live (no game restart)
