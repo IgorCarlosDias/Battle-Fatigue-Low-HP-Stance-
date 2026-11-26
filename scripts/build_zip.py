@@ -14,6 +14,7 @@ INCLUDE_FILES = [
     "mod.json",
     "README.md",
     "CHANGELOG.md",
+    "HOW_TO_INSTALL.txt",
     "LICENSE",
     "ue4ss/BattleFatigue/enabled.txt",
     "ue4ss/BattleFatigue/Scripts/config.lua",
