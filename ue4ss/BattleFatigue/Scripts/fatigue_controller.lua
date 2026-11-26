@@ -1,4 +1,4 @@
--- Battle Fatigue (Low HP Stance) - Core Controller v1.0.0
+-- Battle Fatigue (Low HP Stance) - Core Controller v1.0.1
 -- Dragon Ball: Sparking! ZERO
 -- Purely visual exhausted idle stance (ground & air) on the last (red) health bar.
 -- Automatically disabled in online battles and replays.
@@ -9,6 +9,8 @@ local Controller = {}
 
 -- UE5 Enums verified from SparkingZERO-Win64-Shipping.exe
 local LOCO_STATE_IDLE_MOVE     = 0   -- EKoratLocomotionState::IdleMove
+local LOCO_STATE_JUMP          = 2   -- EKoratLocomotionState::Jump
+local LOCO_STATE_DASH_UP_DOWN  = 9   -- EKoratLocomotionState::DashUpDown
 local LOCO_STATE_STUN_REACTION = 12  -- EKoratLocomotionState::StunReaction
 
 local STUN_STATUS_OFF   = 0          -- EKoratStunReactionState::OFF
@@ -20,11 +22,46 @@ local DETAIL_IDLE_STAND_GROUND = 2   -- EKoratCharacterLocomotionDetailStatus::I
 local DETAIL_IDLE_STAND_AIR    = 3   -- EKoratCharacterLocomotionDetailStatus::IdleMoveStandAir
 local DETAIL_STUN_STAND        = 78  -- EKoratCharacterLocomotionDetailStatus::StunReactionSTAND
 
--- Action key substrings that clearly represent active combat/charging moves
+-- EMovementMode values from UE5
+local MOVE_WALKING = 1
+local MOVE_FALLING = 3
+local MOVE_FLYING  = 5
+
+-- Sub-status cache properties on KoratCharacterLocomotionComponent (all verified: 0 = OFF/None)
+local SUB_STATUS_FIELDS = {
+    "DashUpDownStatusCache",
+    "JumpStatusCache",
+    "ShortDashStatusCache",
+    "StepStatusCache",
+    "DragonDashStatusCache",
+    "BlowStatusCache",
+    "DragonHomingStatusCache",
+    "RevengeDashStatusCache",
+    "BlastDashStatusCache",
+    "HighSpeedMoveStatusCache",
+    "ZBurstDashStatusCache",
+    "DashUkemiStatusCache",
+    "WallUkemiStatusCache",
+    "GroundRunningState"
+}
+
+-- Optional numeric/bool cache fields probed once per spawn so missing fields never break reads
+local OPTIONAL_FIELDS = {
+    "CurrentLocomotionDetailStatus",
+    "SpeedCache",
+    "XYSpeedCache",
+    "ZSpeedCache",
+    "VelocityZCache",
+    "DashUpDownTypeCache",
+    "IsRequestResetStateMachineCache"
+}
+
+-- Action key substrings that clearly represent active combat/charging/descent/landing moves
 local BUSY_ACTION_PATTERNS = {
     "chg", "grd", "spm", "ult", "exa", "frmc",
     "rsh", "smb", "kdn", "trw", "atk", "cnt",
-    "pry", "dmg", "blw", "dwn", "lta", "hse", "uppf"
+    "pry", "dmg", "blw", "dwn", "lta", "hse", "uppf",
+    "jmp", "dsh", "stp", "lnd", "fln", "fal", "sfl"
 }
 
 -- Cached engine singletons
@@ -45,9 +82,54 @@ local lastBattleKey = nil
 local battleSnapshotLogged = false
 
 -- Per-side fighter state (0 = P1, 1 = P2/CPU)
+local function newFighterState()
+    return {
+        addr = 0,
+        charKey = "",
+        pawn = nil,
+        locoComp = nil,
+        montageComp = nil,
+        validSubFields = {},
+        caps = {},
+        -- Eligibility calculated on the 33ms tick (HP, online guard, chargeLv, finishDemo, MovementMode)
+        eligible = false,
+        tickBusyReason = "",
+        movMode = -1,
+        pawnSpeed = 0,
+        pawnVelZ = 0,
+        hp = 0,
+        maxHp = 0,
+        -- Live state maintained synchronously inside UpdateLocomotionParameterCache pre/post hook
+        weOverrode = false,
+        isFatigued = false,
+        lastReason = "",
+        lastInAir = nil,
+        busyUntil = 0,
+        -- Native (unmodified) snapshot captured on each UpdateLocomotionParameterCache call
+        nativeState = -1,
+        nativeStun = -1,
+        nativeDetail = -1,
+        dashUpDown = 0,
+        dashUpDownType = 0,
+        jumpStatus = 0,
+        groundRun = 0,
+        actKey = "",
+        sectionName = "",
+        inAir = false,
+        speed = 0,
+        velZ = 0,
+        inMag = 0,
+        inZ = 0,
+        -- Compact ring buffer of recent state transitions for F9 diagnostics
+        lastCoreErr = "",
+        history = {},
+        lastHistSig = ""
+    }
+end
+
 local fighterState = {
-    [0] = { addr = 0, charKey = "", locoComp = nil, montageComp = nil, wantFatigue = false, isFatigued = false, lastReason = "" },
-    [1] = { addr = 0, charKey = "", locoComp = nil, montageComp = nil, wantFatigue = false, isFatigued = false, lastReason = "" }
+    [0] = newFighterState(),
+    [1] = newFighterState()
 }
 
 -- O(1) lookup from locoComp address -> side index for synchronous hooks
@@ -86,9 +168,26 @@ local function clearLog()
     if path then
         local f = io.open(path, "w")
         if f then
-            f:write("=== Battle Fatigue v1.0.0 Runtime Log (" .. os.date("%Y-%m-%d %H:%M:%S") .. ") ===\n")
+            f:write("=== Battle Fatigue v1.0.1 Runtime Log (" .. os.date("%Y-%m-%d %H:%M:%S") .. ") ===\n")
             f:close()
         end
+    end
+end
+
+local function pushHistory(st)
+    local sig = string.format(
+        "ns=%d st=%d dd=%d jp=%d gr=%d air=%s mm=%d act=%s sec=%s fat=%s r=%s",
+        st.nativeState, st.nativeStun, st.dashUpDown, st.jumpStatus, st.groundRun,
+        tostring(st.inAir), st.movMode, st.actKey, st.sectionName,
+        tostring(st.isFatigued), st.lastReason
+    )
+    if sig == st.lastHistSig then return end
+    st.lastHistSig = sig
+    local h = st.history
+    h[#h + 1] = string.format("[%.2f] %s | spd=%.0f vz=%.0f in=%.2f iz=%.2f det=%d",
+        os.clock(), sig, st.speed, st.velZ, st.inMag, st.inZ, st.nativeDetail)
+    if #h > 30 then
+        table.remove(h, 1)
     end
 end
 
@@ -147,16 +246,45 @@ local function isBusyActionKey(actKey)
     return false
 end
 
+-- Safely clear ONLY our own fatigue override; NEVER overwrite a real game state (e.g. DashUpDown / Jump / Blow)
+local function clearFatigueSafe(locoComp, st)
+    if valid(locoComp) then
+        pcall(function()
+            if locoComp.LocomotionStateCache == LOCO_STATE_STUN_REACTION
+               and locoComp.StunReactionStatusCache == STUN_STATUS_STAND then
+                locoComp.LocomotionStateCache = LOCO_STATE_IDLE_MOVE
+                locoComp.StunReactionStatusCache = STUN_STATUS_OFF
+            end
+        end)
+    end
+    if st then
+        st.weOverrode = false
+        st.isFatigued = false
+    end
+end
+
+-- Apply visual fatigue override (called ONLY from synchronous postHook after verifying native state is IdleMove)
+local function applyFatigueOverride(locoComp, st)
+    if not valid(locoComp) then return false end
+    local ok = pcall(function()
+        locoComp.LocomotionStateCache = LOCO_STATE_STUN_REACTION
+        locoComp.StunReactionStatusCache = STUN_STATUS_STAND
+        locoComp.StunReactionIsFrontCache = true
+    end)
+    if ok and st then
+        st.weOverrode = true
+        st.isFatigued = true
+    end
+    return ok
+end
+
 -- Resolve fighter's locomotion component ONCE per character spawn (zero per-frame FindAllOf)
 local function resolveFighterComponents(pawn, side)
-    local st = fighterState[side]
+    local st = newFighterState()
+    fighterState[side] = st
     local pAddr = safeAddr(pawn)
     st.addr = pAddr
-    st.locoComp = nil
-    st.montageComp = nil
-    st.wantFatigue = false
-    st.isFatigued = false
-    st.lastReason = ""
+    st.pawn = pawn
 
     local okKey, keyStr = pcall(function()
         local d = pawn:GetCharacterDataList()
@@ -190,6 +318,22 @@ local function resolveFighterComponents(pawn, side)
         end
     end
 
+    -- Probe which sub-status and optional cache fields exist on this locomotion component once at spawn
+    if valid(st.locoComp) then
+        for _, field in ipairs(SUB_STATUS_FIELDS) do
+            local okF, val = pcall(function() return st.locoComp[field] end)
+            if okF and type(val) == "number" then
+                st.validSubFields[#st.validSubFields + 1] = field
+            end
+        end
+        for _, field in ipairs(OPTIONAL_FIELDS) do
+            local okF, val = pcall(function() return st.locoComp[field] end)
+            if okF and val ~= nil then
+                st.caps[field] = true
+            end
+        end
+    end
+
     local okM, mComp = pcall(function() return pawn:GetKoratCharacterMontageComponent() end)
     if okM and valid(mComp) then
         st.montageComp = mComp
@@ -209,24 +353,10 @@ local function resolveFighterComponents(pawn, side)
         end
     end
 
-    writeLog(string.format("Resolved P%d (%s) | LocoComp=%s", side + 1, st.charKey, safeName(st.locoComp)))
-end
-
--- Override ONLY the animation cache fields on KoratCharacterLocomotionComponent (never locks gameplay controls)
-local function writeFatigueToLocoComp(locoComp, enable)
-    if not valid(locoComp) then return false end
-    local targetState = enable and LOCO_STATE_STUN_REACTION or LOCO_STATE_IDLE_MOVE
-    local targetStun  = enable and STUN_STATUS_STAND or STUN_STATUS_OFF
-
-    local ok = pcall(function()
-        locoComp.LocomotionStateCache = targetState
-        locoComp.StunReactionStatusCache = targetStun
-        if enable then
-            locoComp.StunReactionIsFrontCache = true
-        end
-    end)
-
-    return ok
+    writeLog(string.format(
+        "Resolved P%d (%s) | LocoComp=%s | SubFields=%d",
+        side + 1, st.charKey, safeName(st.locoComp), #st.validSubFields
+    ))
 end
 
 -- Locate active offline battle context safely
@@ -295,24 +425,28 @@ function Controller.getBattle()
     return nil
 end
 
--- Evaluate whether a fighter should display the visual Low-HP exhausted stance
+-- Periodic 33ms evaluation: checks battle/HP/charge/finishDemo/MovementMode eligibility ONLY.
+-- Actual animation override happens synchronously inside UpdateLocomotionParameterCache postHook.
 local function evaluateFighter(pawn, side)
     local st = fighterState[side]
     if not valid(pawn) then
-        st.wantFatigue = false
+        st.eligible = false
         st.isFatigued = false
+        st.weOverrode = false
         return
     end
 
     if safeAddr(pawn) ~= st.addr then
         resolveFighterComponents(pawn, side)
+        st = fighterState[side]
     end
+    st.pawn = pawn
 
     if not config.enabled then
-        if st.isFatigued then
-            st.wantFatigue = false
-            writeFatigueToLocoComp(st.locoComp, false)
-            st.isFatigued = false
+        st.eligible = false
+        st.tickBusyReason = "disabled"
+        if st.isFatigued or st.weOverrode then
+            clearFatigueSafe(st.locoComp, st)
         end
         return
     end
@@ -322,13 +456,15 @@ local function evaluateFighter(pawn, side)
         return pawn:GetHPGaugeValue(), pawn:GetMaxHPGaugeValue()
     end)
     if not okHp or not hp or not maxHp or hp <= 0 or maxHp <= 0 then
-        st.wantFatigue = false
-        if st.isFatigued then
-            writeFatigueToLocoComp(st.locoComp, false)
-            st.isFatigued = false
+        st.eligible = false
+        st.tickBusyReason = "invalidHP"
+        if st.isFatigued or st.weOverrode then
+            clearFatigueSafe(st.locoComp, st)
         end
         return
     end
+    st.hp = hp
+    st.maxHp = maxHp
 
     local isLowHp
     if maxHp > config.hpThreshold then
@@ -338,38 +474,24 @@ local function evaluateFighter(pawn, side)
     end
 
     if not isLowHp then
-        st.wantFatigue = false
-        if st.isFatigued then
-            writeFatigueToLocoComp(st.locoComp, false)
-            st.isFatigued = false
+        st.eligible = false
+        st.tickBusyReason = "hpOK"
+        if st.isFatigued or st.weOverrode then
+            clearFatigueSafe(st.locoComp, st)
             writeLog(string.format("P%d (%s) HP recovered (%.0f/%.0f) -> normal stance", side + 1, st.charKey, hp, maxHp))
         end
         return
     end
 
-    -- 2. Optional ground-only mode (false by default: works on ground AND in the air)
-    if config.groundOnly then
-        local okAir, isInAir = pcall(function()
-            return valid(st.locoComp) and st.locoComp.IsInAirCache
-        end)
-        if okAir and isInAir then
-            st.wantFatigue = false
-            if st.isFatigued then
-                writeFatigueToLocoComp(st.locoComp, false)
-                st.isFatigued = false
-            end
-            return
-        end
-    end
-
     local busyReason = nil
 
-    -- 3. Check active Ki charge level / finish demo
+    -- 2. Check active Ki charge level
     local okCharge, chargeLv = pcall(function() return pawn:GetChargeLv() end)
     if okCharge and type(chargeLv) == "number" and chargeLv > 0 then
         busyReason = "charging(lv=" .. tostring(chargeLv) .. ")"
     end
 
+    -- 3. Check finish demo
     if not busyReason then
         local okDemo, finishDemo = pcall(function() return pawn.bIsFinishDemo end)
         if okDemo and finishDemo then
@@ -377,89 +499,299 @@ local function evaluateFighter(pawn, side)
         end
     end
 
-    -- 4. Check 3D velocity (ground walking & aerial flying/ascending/descending)
-    if not busyReason then
-        local okVel, speedSq = pcall(function()
-            local mov = pawn.CharacterMovement
-            if not valid(mov) then return 0 end
-            local v = mov.Velocity
-            return (v.X * v.X) + (v.Y * v.Y) + (v.Z * v.Z)
-        end)
-        if okVel and speedSq > (config.maxIdleSpeed * config.maxIdleSpeed) then
-            busyReason = string.format("moving(v=%.0f)", math.sqrt(speedSq))
-        end
-    end
-
-    -- 5. Check analog stick / movement input vector (instant 0ms release on tilt)
-    if not busyReason and valid(st.locoComp) then
-        local okIn, inMagSq, inZ = pcall(function()
-            local iv = st.locoComp.InputVectorCache
-            local iz = st.locoComp.InputZCache or 0
-            local m2 = iv and ((iv.X * iv.X) + (iv.Y * iv.Y) + (iv.Z * iv.Z)) or 0
-            return m2, math.abs(iz)
-        end)
-        if okIn then
-            local limSq = config.maxInputMagnitude * config.maxInputMagnitude
-            if inMagSq > limSq or inZ > config.maxInputMagnitude then
-                busyReason = "input"
+    -- 4. Check CharacterMovement MovementMode & 3D Velocity (block Falling / moving)
+    local okMov, movMode, speedSq, velZ = pcall(function()
+        local mov = pawn.CharacterMovement
+        if not valid(mov) then return -1, 0, 0 end
+        local mm = mov.MovementMode
+        local v = mov.Velocity
+        local sq = v and ((v.X * v.X) + (v.Y * v.Y) + (v.Z * v.Z)) or 0
+        return mm, sq, v and v.Z or 0
+    end)
+    if okMov then
+        st.movMode = type(movMode) == "number" and movMode or -1
+        st.pawnSpeed = math.sqrt(speedSq)
+        st.pawnVelZ = velZ
+        if not busyReason then
+            -- Never trigger while falling (3) or in non-Walking/Flying transition modes
+            if st.movMode == MOVE_FALLING or (st.movMode ~= -1 and st.movMode ~= MOVE_WALKING and st.movMode ~= MOVE_FLYING) then
+                busyReason = "movMode=" .. tostring(st.movMode)
+            elseif speedSq > (config.maxIdleSpeed * config.maxIdleSpeed) then
+                busyReason = string.format("pawnVel=%.0f", st.pawnSpeed)
             end
         end
     end
 
-    -- 6. Check locomotion detail status (IdleMove / StandFar / StandGround / StandAir)
-    local detailStatus = -1
-    local okDet, ds = pcall(function() return pawn:GetCurrentLocomotionDetailStatus() end)
-    if okDet and type(ds) == "number" then
-        detailStatus = ds
-        local isIdleDetail = (
-            ds == DETAIL_IDLE_MOVE
-            or ds == DETAIL_IDLE_STAND_FAR
-            or ds == DETAIL_IDLE_STAND_GROUND
-            or ds == DETAIL_IDLE_STAND_AIR
-        )
-        local isOurStun = (st.isFatigued and ds == DETAIL_STUN_STAND)
-        if not isIdleDetail and not isOurStun then
-            busyReason = "detailStatus=" .. tostring(ds)
-        end
-    end
-
-    -- 7. Check active combat action key on LocomotionComponent (guard, charge, blast, rush, transform, etc.)
-    if not busyReason and valid(st.locoComp) then
-        local okAct, actKey = pcall(function()
-            local a = st.locoComp.CurrentRunningAction
-            return a and a.Key and a.Key:ToString() or ""
-        end)
-        if okAct and isBusyActionKey(actKey) then
-            busyReason = "action=" .. tostring(actKey)
+    -- 5. Check CurrentLocomotionDetailStatus on pawn
+    if not busyReason then
+        local okDet, ds = pcall(function() return pawn:GetCurrentLocomotionDetailStatus() end)
+        if okDet and type(ds) == "number" then
+            local isIdleDetail = (
+                ds == DETAIL_IDLE_MOVE
+                or ds == DETAIL_IDLE_STAND_FAR
+                or ds == DETAIL_IDLE_STAND_GROUND
+                or ds == DETAIL_IDLE_STAND_AIR
+            )
+            local isOurStun = (st.isFatigued and ds == DETAIL_STUN_STAND)
+            if not isIdleDetail and not isOurStun then
+                busyReason = "pawnDetail=" .. tostring(ds)
+            end
         end
     end
 
     if busyReason then
-        st.wantFatigue = false
-        if st.isFatigued then
-            writeFatigueToLocoComp(st.locoComp, false)
-            st.isFatigued = false
+        st.eligible = false
+        st.tickBusyReason = busyReason
+        local isAirMove = (st.movMode == MOVE_FALLING) or (math.abs(st.pawnVelZ) > (config.maxIdleSpeed or 25.0))
+        local delay = isAirMove and (config.airTransitionDelaySec or 0.30) or (config.idleDelaySec or 0.15)
+        local untilT = os.clock() + delay
+        if untilT > st.busyUntil then st.busyUntil = untilT end
+        if st.isFatigued or st.weOverrode then
+            clearFatigueSafe(st.locoComp, st)
+            st.lastReason = busyReason
+            pushHistory(st)
             writeLog(string.format("P%d (%s) -> normal stance (%s)", side + 1, st.charKey, busyReason))
         end
-        st.lastReason = busyReason
         return
     end
 
-    -- All conditions met: Low HP + Stationary/Idle (Ground or Air)!
-    st.wantFatigue = true
-    local applied = writeFatigueToLocoComp(st.locoComp, true)
-    if not st.isFatigued then
-        st.isFatigued = true
+    st.eligible = true
+    st.tickBusyReason = ""
+end
+
+-- Synchronous pre-hook: restore clean IdleMove before Unreal recalculates caches
+-- so UpdateLocomotionParameterCache never mistakes our visual override for a real stun.
+local function onPreUpdateCache(selfObj)
+    local lc = selfObj and selfObj:get() or nil
+    local addr = safeAddr(lc)
+    local side = locoAddrToSide[addr]
+    if side == nil then return end
+
+    local st = fighterState[side]
+    if st and st.weOverrode then
+        pcall(function()
+            if lc.LocomotionStateCache == LOCO_STATE_STUN_REACTION
+               and lc.StunReactionStatusCache == STUN_STATUS_STAND then
+                lc.LocomotionStateCache = LOCO_STATE_IDLE_MOVE
+                lc.StunReactionStatusCache = STUN_STATUS_OFF
+            end
+        end)
+        st.weOverrode = false
+    end
+end
+
+-- Synchronous post-hook: inspect the EXACT native caches Unreal just computed this frame.
+-- ONLY apply visual fatigue if the fighter is genuinely in native IdleMove with all sub-states OFF,
+-- zero input, zero velocity, and past the stabilization delay.
+local function onPostUpdateCache(selfObj)
+    hookFiredCount = hookFiredCount + 1
+    local lc = selfObj and selfObj:get() or nil
+    local addr = safeAddr(lc)
+    local side = locoAddrToSide[addr]
+    if side == nil then return end
+
+    local st = fighterState[side]
+    if not st then return end
+
+    local now = os.clock()
+
+    -- Read core verified locomotion cache values computed by C++ this exact frame
+    local okCore, nState, nStun, inAir = pcall(function()
+        return lc.LocomotionStateCache, lc.StunReactionStatusCache, (lc.IsInAirCache == true)
+    end)
+
+    if not okCore then
+        st.lastCoreErr = tostring(nState)
+        st.isFatigued = false
+        st.weOverrode = false
+        return
+    end
+    st.lastCoreErr = ""
+
+    -- Read input vector safely (FVector2D has X/Y without Z; InputZCache is separate!)
+    local inMag, inZ = 0, 0
+    pcall(function()
+        local iv = lc.InputVectorCache
+        if iv ~= nil then
+            local ix = iv.X or 0
+            local iy = iv.Y or 0
+            local okZ, izVal = pcall(function() return iv.Z end)
+            local iz0 = (okZ and type(izVal) == "number") and izVal or 0
+            inMag = math.sqrt((ix * ix) + (iy * iy) + (iz0 * iz0))
+        end
+    end)
+    pcall(function()
+        inZ = math.abs(lc.InputZCache or 0)
+    end)
+
+    -- Read current running action & section safely
+    local actKey, secName = "", ""
+    pcall(function()
+        local a = lc.CurrentRunningAction
+        if a and a.Key then
+            actKey = a.Key:ToString() or ""
+        end
+    end)
+    pcall(function()
+        local sec = lc.CurrentRunningSection
+        if sec then
+            secName = sec:ToString() or ""
+        end
+    end)
+
+    -- Read optional probed fields safely
+    local caps = st.caps
+    local nDet = -1
+    local spd, xySpd, zSpd, velZ = st.pawnSpeed, 0, 0, st.pawnVelZ
+    local ddType = 0
+    local resettingSM = false
+
+    pcall(function()
+        if caps.CurrentLocomotionDetailStatus then nDet = lc.CurrentLocomotionDetailStatus or -1 end
+        if caps.SpeedCache then spd = lc.SpeedCache or 0 end
+        if caps.XYSpeedCache then xySpd = lc.XYSpeedCache or 0 end
+        if caps.ZSpeedCache then zSpd = lc.ZSpeedCache or 0 end
+        if caps.VelocityZCache then velZ = lc.VelocityZCache or 0 end
+        if caps.DashUpDownTypeCache then ddType = lc.DashUpDownTypeCache or 0 end
+        if caps.IsRequestResetStateMachineCache then resettingSM = (lc.IsRequestResetStateMachineCache == true) end
+    end)
+
+    st.nativeState = type(nState) == "number" and nState or -1
+    st.nativeStun = type(nStun) == "number" and nStun or -1
+    st.nativeDetail = type(nDet) == "number" and nDet or -1
+    st.inAir = inAir
+    st.speed = spd
+    st.velZ = velZ
+    st.inMag = inMag
+    st.inZ = inZ
+    st.actKey = actKey
+    st.sectionName = secName
+    st.dashUpDownType = type(ddType) == "number" and ddType or 0
+
+    -- Detect air <-> ground transition (landing / takeoff) and grant a cooldown window
+    if st.lastInAir ~= nil and st.lastInAir ~= inAir then
+        local airDelay = config.airTransitionDelaySec or 0.30
+        if (now + airDelay) > st.busyUntil then
+            st.busyUntil = now + airDelay
+        end
+    end
+    st.lastInAir = inAir
+
+    -- Check all locomotion sub-status caches (DashUpDown, Jump, Step, ShortDash, Blow, etc.)
+    local activeSubField = nil
+    local activeSubVal = 0
+    st.dashUpDown = 0
+    st.jumpStatus = 0
+    st.groundRun = 0
+
+    for _, field in ipairs(st.validSubFields) do
+        local okF, val = pcall(function() return lc[field] end)
+        if okF and type(val) == "number" then
+            if field == "DashUpDownStatusCache" then st.dashUpDown = val end
+            if field == "JumpStatusCache" then st.jumpStatus = val end
+            if field == "GroundRunningState" then st.groundRun = val end
+            if val ~= 0 and not activeSubField then
+                activeSubField = field
+                activeSubVal = val
+            end
+        end
+    end
+
+    -- Evaluate synchronous busy reason for this exact frame
+    local reason = nil
+    local isTransitionBusy = false
+    local maxSpd = config.maxIdleSpeed or 25.0
+    local maxIn = config.maxInputMagnitude or 0.05
+
+    if not config.enabled then
+        reason = "disabled"
+    elseif not st.eligible then
+        reason = st.tickBusyReason ~= "" and st.tickBusyReason or "notEligible"
+    elseif config.groundOnly and inAir then
+        reason = "inAir(groundOnly)"
+    elseif st.nativeState ~= LOCO_STATE_IDLE_MOVE then
+        reason = "nativeState=" .. tostring(st.nativeState)
+        if st.nativeState == LOCO_STATE_DASH_UP_DOWN or st.nativeState == LOCO_STATE_JUMP then
+            isTransitionBusy = true
+        end
+    elseif st.nativeStun ~= STUN_STATUS_OFF then
+        reason = "nativeStun=" .. tostring(st.nativeStun)
+    elseif activeSubField then
+        reason = activeSubField .. "=" .. tostring(activeSubVal)
+        if activeSubField == "DashUpDownStatusCache" or activeSubField == "JumpStatusCache" then
+            isTransitionBusy = true
+        end
+    elseif resettingSM then
+        reason = "resetSM"
+        isTransitionBusy = true
+    elseif inMag > maxIn or inZ > maxIn then
+        reason = string.format("input(%.2f,z=%.2f)", inMag, inZ)
+        if inZ > maxIn then
+            isTransitionBusy = true
+        end
+    elseif spd > maxSpd or xySpd > maxSpd or zSpd > maxSpd or math.abs(velZ) > maxSpd then
+        reason = string.format("speed(%.0f,vz=%.0f)", spd, velZ)
+        if math.abs(velZ) > maxSpd then
+            isTransitionBusy = true
+        end
+    elseif isBusyActionKey(actKey) then
+        reason = "action=" .. actKey
+    else
+        local isIdleDetail = (
+            st.nativeDetail == DETAIL_IDLE_MOVE
+            or st.nativeDetail == DETAIL_IDLE_STAND_FAR
+            or st.nativeDetail == DETAIL_IDLE_STAND_GROUND
+            or st.nativeDetail == DETAIL_IDLE_STAND_AIR
+        )
+        local isOurStun = (st.isFatigued and st.nativeDetail == DETAIL_STUN_STAND)
+        if st.nativeDetail >= 0 and not isIdleDetail and not isOurStun then
+            reason = "detail=" .. tostring(st.nativeDetail)
+        end
+    end
+
+    if reason then
+        -- Extend stabilization delay whenever actively moving, inputting, or landing/ascending/descending
+        if reason ~= "disabled" and reason ~= "hpOK" and reason ~= "invalidHP" and reason ~= "notEligible" then
+            local delay = isTransitionBusy and (config.airTransitionDelaySec or 0.30) or (config.idleDelaySec or 0.15)
+            if (now + delay) > st.busyUntil then
+                st.busyUntil = now + delay
+            end
+        end
+        if st.isFatigued then
+            st.isFatigued = false
+            writeLog(string.format("P%d (%s) -> normal stance (%s)", side + 1, st.charKey, reason))
+        end
+        st.weOverrode = false
+        st.lastReason = reason
+        pushHistory(st)
+        return
+    end
+
+    -- Wait for brief stabilization window after movement/landing ends
+    if now < st.busyUntil then
+        st.isFatigued = false
+        st.weOverrode = false
+        st.lastReason = "stabilizing"
+        pushHistory(st)
+        return
+    end
+
+    -- All synchronous & tick safety checks passed: apply visual-only exhausted idle stance!
+    local wasFatigued = st.isFatigued
+    local applied = applyFatigueOverride(lc, st)
+    st.lastReason = ""
+    pushHistory(st)
+    if not wasFatigued and applied then
         writeLog(string.format(
-            "P%d (%s) -> EXHAUSTED STANCE ON (HP=%.0f/%.0f detail=%d applied=%s)",
-            side + 1, st.charKey, hp, maxHp, detailStatus, tostring(applied)
+            "P%d (%s) -> EXHAUSTED STANCE ON (HP=%.0f/%.0f air=%s act=%s sec=%s det=%d)",
+            side + 1, st.charKey, st.hp, st.maxHp, tostring(inAir), actKey, secName, st.nativeDetail
         ))
     end
 end
 
 -- On-demand diagnostic snapshot (F9 hotkey)
 function Controller.dumpDiagnostics(tag)
-    writeLog("========== DIAGNOSTIC SNAPSHOT [" .. tostring(tag or "manual") .. "] ==========", true)
+    writeLog("========== DIAGNOSTIC SNAPSHOT v1.0.1 [" .. tostring(tag or "manual") .. "] ==========", true)
     writeLog(string.format("enabled=%s hooksRegistered=%s hookFiredCount=%d", tostring(config.enabled), tostring(hooksRegistered), hookFiredCount), true)
 
     local battle = Controller.getBattle()
@@ -473,37 +805,51 @@ function Controller.dumpDiagnostics(tag)
             local st = fighterState[side]
             if safeAddr(pawn) ~= st.addr then
                 resolveFighterComponents(pawn, side)
+                st = fighterState[side]
             end
             local okHp, hp, mhp = pcall(function() return pawn:GetHPGaugeValue(), pawn:GetMaxHPGaugeValue() end)
             local okDet, det = pcall(function() return pawn:GetCurrentLocomotionDetailStatus() end)
             local okChg, chg = pcall(function() return pawn:GetChargeLv() end)
-            local okVel, vx, vy, vz = pcall(function()
-                local v = pawn.CharacterMovement.Velocity
-                return v.X, v.Y, v.Z
+            local okVel, vx, vy, vz, mm = pcall(function()
+                local mov = pawn.CharacterMovement
+                local v = mov.Velocity
+                return v.X, v.Y, v.Z, mov.MovementMode
             end)
             writeLog(string.format(
-                "P%d (%s) HP=%.0f/%.0f detail=%s chargeLv=%s vel=(%.1f,%.1f,%.1f) wantFatigue=%s isFatigued=%s lastReason=%s",
+                "P%d (%s) HP=%.0f/%.0f detail=%s chargeLv=%s movMode=%s vel=(%.1f,%.1f,%.1f) eligible=%s isFatigued=%s lastReason=%s",
                 side + 1, st.charKey,
                 okHp and hp or -1, okHp and mhp or -1,
                 tostring(okDet and det or "err"), tostring(okChg and chg or "err"),
+                tostring(okVel and mm or "err"),
                 okVel and vx or 0, okVel and vy or 0, okVel and vz or 0,
-                tostring(st.wantFatigue), tostring(st.isFatigued), tostring(st.lastReason)
+                tostring(st.eligible), tostring(st.isFatigued), tostring(st.lastReason)
             ), true)
 
             if valid(st.locoComp) then
-                local okL, lState, sStat, inAir, actKey = pcall(function()
+                local okL, lState, sStat, inAir, actKey, secName, iz = pcall(function()
                     local lc = st.locoComp
                     local ak = lc.CurrentRunningAction and lc.CurrentRunningAction.Key and lc.CurrentRunningAction.Key:ToString() or "None"
-                    return lc.LocomotionStateCache, lc.StunReactionStatusCache, lc.IsInAirCache, ak
+                    local sn = lc.CurrentRunningSection and lc.CurrentRunningSection:ToString() or "None"
+                    return lc.LocomotionStateCache, lc.StunReactionStatusCache, lc.IsInAirCache, ak, sn, lc.InputZCache
                 end)
                 writeLog(string.format(
-                    "  LocoComp: ok=%s StateCache=%s StunCache=%s InAir=%s Act=%s",
-                    tostring(okL), tostring(lState), tostring(sStat), tostring(inAir), tostring(actKey)
+                    "  LocoComp: ok=%s State=%s(native=%d) Stun=%s(native=%d) InAir=%s Act=%s Sec=%s DashUD=%d(type=%d) Jump=%d GRun=%d InZ=%s SubFields=%d CoreErr=%s",
+                    tostring(okL), tostring(lState), st.nativeState, tostring(sStat), st.nativeStun,
+                    tostring(inAir), tostring(actKey), tostring(secName),
+                    st.dashUpDown, st.dashUpDownType, st.jumpStatus, st.groundRun, tostring(iz), #st.validSubFields, tostring(st.lastCoreErr)
                 ), true)
+            end
+
+            if #st.history > 0 then
+                writeLog("  Recent transitions (" .. tostring(#st.history) .. "):", true)
+                local startIdx = math.max(1, #st.history - 14)
+                for i = startIdx, #st.history do
+                    writeLog("    " .. st.history[i], true)
+                end
             end
         end
     end
-    writeLog("==========================================================", true)
+    writeLog("=================================================================", true)
 end
 
 -- Register synchronous Game-Thread hooks on KoratCharacterLocomotionComponent
@@ -516,18 +862,7 @@ function Controller.registerHooks()
 
     for _, fnPath in ipairs(targets) do
         local ok, preId, postId = pcall(function()
-            return RegisterHook(fnPath, function() end, function(selfObj)
-                hookFiredCount = hookFiredCount + 1
-                local lc = selfObj and selfObj:get() or nil
-                local addr = safeAddr(lc)
-                local side = locoAddrToSide[addr]
-                if side ~= nil then
-                    local st = fighterState[side]
-                    if st and st.wantFatigue then
-                        writeFatigueToLocoComp(lc, true)
-                    end
-                end
-            end)
+            return RegisterHook(fnPath, onPreUpdateCache, onPostUpdateCache)
         end)
         if ok and preId then
             table.insert(registeredHooks, { path = fnPath, pre = preId, post = postId })
@@ -541,6 +876,12 @@ function Controller.registerHooks()
 end
 
 function Controller.unregisterHooks()
+    for s = 0, 1 do
+        local st = fighterState[s]
+        if st and (st.isFatigued or st.weOverrode) then
+            clearFatigueSafe(st.locoComp, st)
+        end
+    end
     for _, h in ipairs(registeredHooks) do
         pcall(function() UnregisterHook(h.path, h.pre, h.post) end)
     end
@@ -550,7 +891,7 @@ end
 
 function Controller.init()
     clearLog()
-    print("[BattleFatigue] v1.0.0 loaded (Ground & Air | Last Red Bar <= " .. tostring(config.hpThreshold) .. " HP)")
+    print("[BattleFatigue] v1.0.1 loaded (Ground & Air | Last Red Bar <= " .. tostring(config.hpThreshold) .. " HP)")
     Controller.registerHooks()
 end
 
@@ -559,10 +900,12 @@ function Controller.toggleEnabled()
     print("[BattleFatigue] Toggled: enabled = " .. tostring(config.enabled))
     if not config.enabled then
         for s = 0, 1 do
-            if fighterState[s].isFatigued then
-                fighterState[s].wantFatigue = false
-                writeFatigueToLocoComp(fighterState[s].locoComp, false)
-                fighterState[s].isFatigued = false
+            local st = fighterState[s]
+            if st then
+                st.eligible = false
+                if st.isFatigued or st.weOverrode then
+                    clearFatigueSafe(st.locoComp, st)
+                end
             end
         end
     end
@@ -575,11 +918,7 @@ function Controller.tick()
             lastBattleKey = nil
             battleSnapshotLogged = false
             for s = 0, 1 do
-                fighterState[s].addr = 0
-                fighterState[s].locoComp = nil
-                fighterState[s].montageComp = nil
-                fighterState[s].wantFatigue = false
-                fighterState[s].isFatigued = false
+                fighterState[s] = newFighterState()
             end
             locoAddrToSide = {}
         end

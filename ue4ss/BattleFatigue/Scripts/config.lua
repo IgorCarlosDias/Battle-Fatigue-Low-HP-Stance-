@@ -24,6 +24,13 @@ local config = {
     -- Analog stick deadzone (moving the stick beyond this immediately cancels the stance)
     maxInputMagnitude = 0.05,
 
+    -- Stabilization delay (seconds) after stopping movement before showing exhausted stance
+    -- Prevents interfering with landing/descent/action exit frames
+    idleDelaySec = 0.15,
+
+    -- Extra stabilization delay (seconds) after air/ground or DashUpDown/Jump transitions
+    airTransitionDelaySec = 0.30,
+
     -- Main check interval in milliseconds (33ms = ~30Hz, negligible CPU cost)
     checkIntervalMs = 33,
 

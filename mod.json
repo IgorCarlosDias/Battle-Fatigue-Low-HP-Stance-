@@ -1,8 +1,8 @@
 {
   "name": "Battle Fatigue (Low HP Stance)",
-  "submitter": "IgorCarlosDias",
+  "submitter": "Zayko96",
   "cat": "Gameplay",
   "description": "Makes all characters enter a visual exhausted/fatigue idle stance when standing still (on the ground or hovering in the air) during their last (red) health bar, with zero input lock or delay.",
   "homepage": "https://github.com/IgorCarlosDias/Battle-Fatigue-Low-HP-Stance-",
-  "lastupdate": "2026-11-25T23:15:00"
+  "lastupdate": "2026-11-26T11:22:00"
 }
