@@ -2,7 +2,7 @@
 
 All notable changes to **Battle Fatigue (Low HP Stance)** are documented in this file.
 
-## [1.1.0] - Unreleased (Pending In-Game Verification)
+## [1.1.0] - 2026-11-26
 
 ### Fixed
 - **Eliminated `0xC0000264` UE4SS crash:** Removed non-existent `.Z` access on `FVector2D` (`InputVectorCache`) and removed background `LoopAsync` thread execution; all evaluation and hook overrides now run synchronously on the Game Thread.
