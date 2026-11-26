@@ -45,15 +45,14 @@ local SUB_STATUS_FIELDS = {
     "GroundRunningState"
 }
 
--- Optional numeric/bool cache fields probed once per spawn so missing fields never break reads
+-- Optional numeric cache fields probed once per spawn so missing fields never break reads
 local OPTIONAL_FIELDS = {
     "CurrentLocomotionDetailStatus",
     "SpeedCache",
     "XYSpeedCache",
     "ZSpeedCache",
     "VelocityZCache",
-    "DashUpDownTypeCache",
-    "IsRequestResetStateMachineCache"
+    "DashUpDownTypeCache"
 }
 
 -- Action key substrings that clearly represent active combat/charging/descent/landing moves
@@ -644,7 +643,6 @@ local function onPostUpdateCache(selfObj)
     local nDet = -1
     local spd, xySpd, zSpd, velZ = st.pawnSpeed, 0, 0, st.pawnVelZ
     local ddType = 0
-    local resettingSM = false
 
     pcall(function()
         if caps.CurrentLocomotionDetailStatus then nDet = lc.CurrentLocomotionDetailStatus or -1 end
@@ -653,7 +651,6 @@ local function onPostUpdateCache(selfObj)
         if caps.ZSpeedCache then zSpd = lc.ZSpeedCache or 0 end
         if caps.VelocityZCache then velZ = lc.VelocityZCache or 0 end
         if caps.DashUpDownTypeCache then ddType = lc.DashUpDownTypeCache or 0 end
-        if caps.IsRequestResetStateMachineCache then resettingSM = (lc.IsRequestResetStateMachineCache == true) end
     end)
 
     st.nativeState = type(nState) == "number" and nState or -1
@@ -721,9 +718,6 @@ local function onPostUpdateCache(selfObj)
         if activeSubField == "DashUpDownStatusCache" or activeSubField == "JumpStatusCache" then
             isTransitionBusy = true
         end
-    elseif resettingSM then
-        reason = "resetSM"
-        isTransitionBusy = true
     elseif inMag > maxIn or inZ > maxIn then
         reason = string.format("input(%.2f,z=%.2f)", inMag, inZ)
         if inZ > maxIn then
