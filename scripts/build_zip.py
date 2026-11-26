@@ -13,6 +13,7 @@ ZIP_PATH = DIST_DIR / f"Battle-Fatigue-Low-HP-Stance-v{VERSION}.zip"
 INCLUDE_FILES = [
     "mod.json",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE",
     "ue4ss/BattleFatigue/enabled.txt",
     "ue4ss/BattleFatigue/Scripts/config.lua",

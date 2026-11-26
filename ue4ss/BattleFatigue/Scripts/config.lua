@@ -31,8 +31,14 @@ local config = {
     -- Extra stabilization delay (seconds) after air/ground or DashUpDown/Jump transitions
     airTransitionDelaySec = 0.25,
 
-    -- Enable live hotkeys: F7 (Toggle), F8 (Hot-Reload), F9 (Diagnostic Dump)
+    -- Enable live toggle hotkey: F7 (Toggle ON/OFF)
     enableHotkeys = true,
+
+    -- Enable developer hotkeys: F8 (Hot-Reload), F9 (Diagnostic Dump)
+    enableDevHotkeys = false,
+
+    -- Accumulate hook timing with os.clock() and show calls/sec + avg us in F9 dump
+    profile = false,
 
     -- Diagnostic logging (keep false for zero disk writes and zero history overhead during normal play)
     logDebug = false,

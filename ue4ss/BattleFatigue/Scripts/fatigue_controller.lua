@@ -27,6 +27,21 @@ local DETAIL_STUN_STAND        = 78  -- EKoratCharacterLocomotionDetailStatus::S
 local MOVE_WALKING = 1
 local MOVE_FALLING = 3
 local MOVE_FLYING  = 5
+local MOVE_CUSTOM  = 6
+
+-- LocomotionComponent properties probed once per spawn before hot-path reads
+local HOT_CAP_FIELDS = {
+    "DashUpDownStatusCache",
+    "JumpStatusCache",
+    "ShortDashStatusCache",
+    "StepStatusCache",
+    "GroundRunningState",
+    "InputZCache",
+    "InputVectorCache",
+    "VelocityZCache",
+    "SpeedCache",
+    "CurrentLocomotionDetailStatus"
+}
 
 -- Action key substrings that represent active combat/charging/descent/landing moves
 local BUSY_ACTION_PATTERNS = {
@@ -43,6 +58,7 @@ local maxInputMag     = config.maxInputMagnitude or 0.05
 local maxInputMagSq   = maxInputMag * maxInputMag
 local idleDelaySec    = config.idleDelaySec or 0.08
 local airDelaySec     = config.airTransitionDelaySec or 0.25
+local profileEnabled  = (config.profile == true)
 
 -- Cached engine singletons
 local gameInstance     = nil
@@ -55,9 +71,17 @@ local nextDiscovery    = 0
 local hooksRegistered  = false
 local registeredHooks  = {}
 local hookFiredCount   = 0
+local updateHookCount  = 0
+local setHookCount     = 0
 local nextTickClock    = 0
 local lastBattleKey    = nil
 local inValidBattle    = false
+local missingLogged    = false
+
+-- Optional profiler accumulators (active only when config.profile = true)
+local profCalls        = 0
+local profTotalSec     = 0.0
+local profStartClock   = 0
 
 -- Per-side fighter state (0 = P1, 1 = P2/CPU)
 local function newFighterState()
@@ -66,6 +90,7 @@ local function newFighterState()
         charKey = "",
         pawn = nil,
         locoComp = nil,
+        caps = {},
         -- Tick-level flags (updated at 10-20Hz on the Game Thread, never on an async thread)
         lowHp = false,
         eligible = false,
@@ -264,6 +289,34 @@ local function resolveFighterComponents(pawn, side)
         end
     end
 
+    -- Probe all hot-path properties ONCE per spawn so missing fields are never read at 60Hz
+    local missingFields = {}
+    if valid(st.locoComp) then
+        local lc = st.locoComp
+        for i = 1, #HOT_CAP_FIELDS do
+            local field = HOT_CAP_FIELDS[i]
+            local okF, val = pcall(function() return lc[field] end)
+            if okF and val ~= nil then
+                if field == "InputVectorCache" then
+                    local okXY, hasXY = pcall(function() return val.X ~= nil and val.Y ~= nil end)
+                    st.caps[field] = (okXY and hasXY) or false
+                else
+                    st.caps[field] = true
+                end
+            else
+                st.caps[field] = false
+            end
+            if not st.caps[field] then
+                missingFields[#missingFields + 1] = field
+            end
+        end
+    end
+
+    if config.logDebug and not missingLogged and #missingFields > 0 then
+        missingLogged = true
+        writeLog("Missing LocoComp fields (" .. st.charKey .. "): " .. table.concat(missingFields, ", "))
+    end
+
     writeLog(string.format("Resolved P%d (%s) | LocoComp=%s", side + 1, st.charKey, safeName(st.locoComp)))
 end
 
@@ -409,7 +462,7 @@ local function evaluateFighter(pawn, side, now)
         end
     end
 
-    -- 3. Check CharacterMovement MovementMode & 3D Velocity (block Falling / Custom / Moving)
+    -- 3. Check CharacterMovement MovementMode & 3D Velocity (allow Walking=1, Flying=5, Custom=6; block Falling=3)
     if not busyReason then
         local okMov, movMode, speedSq, velZ = pcall(function()
             local mov = pawn.CharacterMovement
@@ -421,7 +474,7 @@ local function evaluateFighter(pawn, side, now)
         end)
         if okMov then
             st.movMode = type(movMode) == "number" and movMode or -1
-            if st.movMode == MOVE_FALLING or (st.movMode ~= -1 and st.movMode ~= MOVE_WALKING and st.movMode ~= MOVE_FLYING) then
+            if st.movMode == MOVE_FALLING or (st.movMode ~= -1 and st.movMode ~= MOVE_WALKING and st.movMode ~= MOVE_FLYING and st.movMode ~= MOVE_CUSTOM) then
                 busyReason = "movMode"
             elseif speedSq > maxIdleSpeedSq then
                 busyReason = "pawnVel"
@@ -563,11 +616,12 @@ local function _evalAndApplyPostHook(lc, st, now)
     end
 
     -- Check critical movement sub-states (DashUpDown, Jump, ShortDash, Step, GroundRunning)
-    local dd = lc.DashUpDownStatusCache
-    local jp = lc.JumpStatusCache
-    local sd = lc.ShortDashStatusCache
-    local stp = lc.StepStatusCache
-    local gr = lc.GroundRunningState
+    local caps = st.caps
+    local dd  = caps.DashUpDownStatusCache and lc.DashUpDownStatusCache or 0
+    local jp  = caps.JumpStatusCache and lc.JumpStatusCache or 0
+    local sd  = caps.ShortDashStatusCache and lc.ShortDashStatusCache or 0
+    local stp = caps.StepStatusCache and lc.StepStatusCache or 0
+    local gr  = caps.GroundRunningState and lc.GroundRunningState or 0
     st.dashUpDown = dd
     st.jumpStatus = jp
     st.groundRun = gr
@@ -587,65 +641,77 @@ local function _evalAndApplyPostHook(lc, st, now)
     end
 
     -- Check vertical & 2D directional input (FVector2D: X, Y only - NEVER touch .Z!)
-    local iz = lc.InputZCache
-    if iz and (iz > maxInputMag or iz < -maxInputMag) then
-        st.isFatigued = false
-        st.weOverrode = false
-        st.lastReason = "inputZ"
-        if (now + airDelaySec) > st.busyUntil then st.busyUntil = now + airDelaySec end
-        return
-    end
-
-    local iv = lc.InputVectorCache
-    if iv ~= nil then
-        local ix = iv.X or 0
-        local iy = iv.Y or 0
-        if (ix * ix + iy * iy) > maxInputMagSq then
+    if caps.InputZCache then
+        local iz = lc.InputZCache
+        if iz and (iz > maxInputMag or iz < -maxInputMag) then
             st.isFatigued = false
             st.weOverrode = false
-            st.lastReason = "inputXY"
-            if (now + idleDelaySec) > st.busyUntil then st.busyUntil = now + idleDelaySec end
+            st.lastReason = "inputZ"
+            if (now + airDelaySec) > st.busyUntil then st.busyUntil = now + airDelaySec end
             return
+        end
+    end
+
+    if caps.InputVectorCache then
+        local iv = lc.InputVectorCache
+        if iv ~= nil then
+            local ix = iv.X or 0
+            local iy = iv.Y or 0
+            if (ix * ix + iy * iy) > maxInputMagSq then
+                st.isFatigued = false
+                st.weOverrode = false
+                st.lastReason = "inputXY"
+                if (now + idleDelaySec) > st.busyUntil then st.busyUntil = now + idleDelaySec end
+                return
+            end
         end
     end
 
     -- Check locomotion speed caches directly (no sqrt!)
-    local vz = lc.VelocityZCache
-    if vz and (vz > maxIdleSpeed or vz < -maxIdleSpeed) then
-        st.isFatigued = false
-        st.weOverrode = false
-        st.lastReason = "velZ"
-        if (now + airDelaySec) > st.busyUntil then st.busyUntil = now + airDelaySec end
-        return
-    end
-
-    local spd = lc.SpeedCache
-    if spd and spd > maxIdleSpeed then
-        st.isFatigued = false
-        st.weOverrode = false
-        st.lastReason = "speed"
-        if (now + idleDelaySec) > st.busyUntil then st.busyUntil = now + idleDelaySec end
-        return
-    end
-
-    -- Check native locomotion detail status
-    local det = lc.CurrentLocomotionDetailStatus
-    st.nativeDetail = det or -1
-    if det ~= nil then
-        local isIdleDet = (
-            det == DETAIL_IDLE_MOVE
-            or det == DETAIL_IDLE_STAND_FAR
-            or det == DETAIL_IDLE_STAND_GROUND
-            or det == DETAIL_IDLE_STAND_AIR
-        )
-        local isOurStun = (st.isFatigued and det == DETAIL_STUN_STAND)
-        if not isIdleDet and not isOurStun then
+    if caps.VelocityZCache then
+        local vz = lc.VelocityZCache
+        if vz and (vz > maxIdleSpeed or vz < -maxIdleSpeed) then
             st.isFatigued = false
             st.weOverrode = false
-            st.lastReason = "detail"
+            st.lastReason = "velZ"
+            if (now + airDelaySec) > st.busyUntil then st.busyUntil = now + airDelaySec end
+            return
+        end
+    end
+
+    if caps.SpeedCache then
+        local spd = lc.SpeedCache
+        if spd and spd > maxIdleSpeed then
+            st.isFatigued = false
+            st.weOverrode = false
+            st.lastReason = "speed"
             if (now + idleDelaySec) > st.busyUntil then st.busyUntil = now + idleDelaySec end
             return
         end
+    end
+
+    -- Check native locomotion detail status
+    if caps.CurrentLocomotionDetailStatus then
+        local det = lc.CurrentLocomotionDetailStatus
+        st.nativeDetail = det or -1
+        if det ~= nil then
+            local isIdleDet = (
+                det == DETAIL_IDLE_MOVE
+                or det == DETAIL_IDLE_STAND_FAR
+                or det == DETAIL_IDLE_STAND_GROUND
+                or det == DETAIL_IDLE_STAND_AIR
+            )
+            local isOurStun = (st.isFatigued and det == DETAIL_STUN_STAND)
+            if not isIdleDet and not isOurStun then
+                st.isFatigued = false
+                st.weOverrode = false
+                st.lastReason = "detail"
+                if (now + idleDelaySec) > st.busyUntil then st.busyUntil = now + idleDelaySec end
+                return
+            end
+        end
+    else
+        st.nativeDetail = -1
     end
 
     -- Wait for brief stabilization delay after movement/landing ends
@@ -688,12 +754,9 @@ local function onPreUpdateCache(selfObj)
     end
 end
 
--- Synchronous post-hook: runs on Game Thread.
+-- Synchronous post-hook body: runs on Game Thread.
 -- Drives the throttled HP/battle tick AND applies fatigue with zero heap allocations.
-local function onPostUpdateCache(selfObj)
-    hookFiredCount = hookFiredCount + 1
-    local now = os.clock()
-
+local function _onPostCacheBody(selfObj, now)
     -- Drive low-frequency HP/battle evaluation directly on Game Thread (no LoopAsync thread!)
     if now >= nextTickClock then
         pcall(runThrottledTick, now)
@@ -727,11 +790,42 @@ local function onPostUpdateCache(selfObj)
     end
 end
 
+local function onPostUpdateCache(selfObj)
+    hookFiredCount = hookFiredCount + 1
+    local now = os.clock()
+    if profStartClock == 0 then profStartClock = now end
+    _onPostCacheBody(selfObj, now)
+    if profileEnabled then
+        profCalls = profCalls + 1
+        profTotalSec = profTotalSec + (os.clock() - now)
+    end
+end
+
+local function onPostUpdateWrapper(selfObj)
+    updateHookCount = updateHookCount + 1
+    onPostUpdateCache(selfObj)
+end
+
+local function onPostSetWrapper(selfObj)
+    setHookCount = setHookCount + 1
+    onPostUpdateCache(selfObj)
+end
+
 -- On-demand diagnostic snapshot (F9 hotkey)
 function Controller.dumpDiagnostics(tag)
     writeLog("========== DIAGNOSTIC SNAPSHOT v1.1.0 [" .. tostring(tag or "manual") .. "] ==========", true)
-    writeLog(string.format("enabled=%s hooksRegistered=%s hookFiredCount=%d inValidBattle=%s",
-        tostring(config.enabled), tostring(hooksRegistered), hookFiredCount, tostring(inValidBattle)), true)
+    writeLog(string.format("enabled=%s hooksRegistered=%s hookFiredCount=%d (update=%d, set=%d) inValidBattle=%s",
+        tostring(config.enabled), tostring(hooksRegistered), hookFiredCount, updateHookCount, setHookCount, tostring(inValidBattle)), true)
+    if profileEnabled then
+        local elapsed = os.clock() - profStartClock
+        if elapsed < 0.0001 then elapsed = 0.0001 end
+        local callsPerSec = profCalls / elapsed
+        local avgUs = (profCalls > 0) and ((profTotalSec / profCalls) * 1000000.0) or 0.0
+        writeLog(string.format("profile=true calls=%d elapsed=%.2fs calls/s=%.1f avg=%.2f us/call",
+            profCalls, elapsed, callsPerSec, avgUs), true)
+    else
+        writeLog("profile=false", true)
+    end
 
     local battle = Controller.getBattle()
     if not battle then
@@ -782,18 +876,24 @@ function Controller.dumpDiagnostics(tag)
     writeLog("=================================================================", true)
 end
 
--- Register synchronous Game-Thread hook on KoratCharacterLocomotionComponent
+-- Register synchronous Game-Thread hooks on KoratCharacterLocomotionComponent
 function Controller.registerHooks()
     if hooksRegistered then return end
-    local fnPath = "/Script/SS.KoratCharacterLocomotionComponent:UpdateLocomotionParameterCache"
-    local ok, preId, postId = pcall(function()
-        return RegisterHook(fnPath, onPreUpdateCache, onPostUpdateCache)
-    end)
-    if ok and preId then
-        table.insert(registeredHooks, { path = fnPath, pre = preId, post = postId })
-        writeLog("Hook registered: " .. fnPath)
-    else
-        writeLog("Hook unavailable: " .. fnPath)
+    local targets = {
+        { path = "/Script/SS.KoratCharacterLocomotionComponent:UpdateLocomotionParameterCache", post = onPostUpdateWrapper },
+        { path = "/Script/SS.KoratCharacterLocomotionComponent:SetLocomotionParameterCache",    post = onPostSetWrapper }
+    }
+    for i = 1, #targets do
+        local t = targets[i]
+        local ok, preId, postId = pcall(function()
+            return RegisterHook(t.path, onPreUpdateCache, t.post)
+        end)
+        if ok and preId then
+            table.insert(registeredHooks, { path = t.path, pre = preId, post = postId })
+            writeLog("Hook registered: " .. t.path)
+        else
+            writeLog("Hook unavailable: " .. t.path)
+        end
     end
     hooksRegistered = true
 end
@@ -815,6 +915,13 @@ function Controller.unregisterHooks()
     lastBattleKey = nil
     locoAddrToSide = {}
     nextTickClock = 0
+    hookFiredCount = 0
+    updateHookCount = 0
+    setHookCount = 0
+    missingLogged = false
+    profCalls = 0
+    profTotalSec = 0.0
+    profStartClock = 0
 end
 
 function Controller.init()
@@ -825,7 +932,15 @@ function Controller.init()
     maxInputMagSq   = maxInputMag * maxInputMag
     idleDelaySec    = config.idleDelaySec or 0.08
     airDelaySec     = config.airTransitionDelaySec or 0.25
+    profileEnabled  = (config.profile == true)
     nextTickClock   = 0
+    hookFiredCount  = 0
+    updateHookCount = 0
+    setHookCount    = 0
+    missingLogged   = false
+    profCalls       = 0
+    profTotalSec    = 0.0
+    profStartClock  = os.clock()
     print("[BattleFatigue] v1.1.0 loaded (Zero-Overhead Single-Thread | Ground & Air | <= " .. tostring(config.hpThreshold) .. " HP)")
     Controller.registerHooks()
 end

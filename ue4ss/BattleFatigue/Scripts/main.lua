@@ -1,9 +1,9 @@
 -- Battle Fatigue (Low HP Stance) - Main Entry Point v1.1.0
 -- 100% Game-Thread driven (zero LoopAsync threads, zero mutex contention).
--- Hotkeys (when config.enableHotkeys = true):
---   F7 = Toggle Battle Fatigue ON/OFF live
---   F8 = Hot-Reload config.lua & fatigue_controller.lua live (no game restart)
---   F9 = Dump live diagnostics snapshot to %TEMP%\BattleFatigue.log
+-- Hotkeys:
+--   F7 (when config.enableHotkeys = true)    = Toggle Battle Fatigue ON/OFF live
+--   F8 (when config.enableDevHotkeys = true) = Hot-Reload config.lua & fatigue_controller.lua live
+--   F9 (when config.enableDevHotkeys = true) = Dump live diagnostics snapshot to %TEMP%\BattleFatigue.log
 
 local config = require("config")
 local controller = require("fatigue_controller")
@@ -26,7 +26,9 @@ if config.enableHotkeys ~= false then
             end)
         end)
     end)
+end
 
+if config.enableDevHotkeys == true then
     -- F8: Hot-reload Lua scripts live without restarting the game
     pcall(function()
         RegisterKeyBind(Key.F8, function()

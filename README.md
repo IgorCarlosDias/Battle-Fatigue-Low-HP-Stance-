@@ -30,9 +30,9 @@ O mod **Battle Fatigue** traz essa imersão de volta: quando qualquer lutador en
 - **BT3-Style Immersion:** Automatically triggers on the final health bar (`HP <= 10,000` / Red Bar).
 - **Ground & Mid-Air Support:** Works seamlessly whether your character is grounded or floating mid-air.
 - **100% Visual / Zero Input Delay:** Hooks the engine's visual animation cache (`KoratCharacterLocomotionComponent`). Moving, dashing, blocking, vanishes, counters, charging ki, or attacking immediately cancels the pose on the exact same frame.
-- **Universal Compatibility:** Works for all 180+ base roster characters, DLCs, transformations, and custom modded characters (no `.pak` / `.utoc` asset conflicts).
-- **Online & Replay Safe:** Automatically disables itself in online matches and replays to prevent desyncs.
-- **Zero Performance Hit:** Lightweight Lua hook via UE4SS, zero frame drops.
+- **Universal Compatibility:** Works across the base roster, DLCs, transformations, and custom modded characters (no `.pak` / `.utoc` asset conflicts).
+- **Desativa-se em partidas online (melhor esforço):** Attempts to disable itself automatically during online matches and replays.
+- **Lightweight UE4SS Hook:** Runs synchronously on the Game Thread via UE4SS without spawning background threads.
 
 ---
 
@@ -74,12 +74,14 @@ You can easily tweak settings in `ue4ss/BattleFatigue/Scripts/config.lua`:
 | `enablePlayer2` | `true` | Apply to Player 2 / CPU |
 | `groundOnly` | `false` | `false` = ground & air; `true` = ground only |
 | `maxIdleSpeed` | `25.0` | Velocity threshold to consider idle |
-| `enableHotkeys` | `true` | Enable live hotkeys below |
+| `enableHotkeys` | `true` | Enable live toggle hotkey (`F7`) |
+| `enableDevHotkeys` | `false` | Enable dev hotkeys (`F8` hot-reload, `F9` diagnostic dump) |
+| `profile` | `false` | Measure hook calls/sec and average µs in `F9` dump |
 
 ### In-Game Hotkeys:
-- **`F7`** — Toggle Battle Fatigue ON / OFF live.
-- **`F8`** — Hot-reload `config.lua` without restarting the game.
-- **`F9`** — Dump live animation & health debug info to `%TEMP%\BattleFatigue.log`.
+- **`F7`** — Toggle Battle Fatigue ON / OFF live (`enableHotkeys = true`).
+- **`F8`** — Hot-reload `config.lua` without restarting the game (requires `enableDevHotkeys = true`).
+- **`F9`** — Dump live animation & health debug info to `%TEMP%\BattleFatigue.log` (requires `enableDevHotkeys = true`).
 
 ---
 
