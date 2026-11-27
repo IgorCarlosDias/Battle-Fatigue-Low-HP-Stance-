@@ -5,49 +5,80 @@
 --------------------------------------------------------------------
   ENGLISH
 --------------------------------------------------------------------
-Option 1 — Unverum (Recommended)
-1. Make sure you have Unverum installed:
-   https://gamebanana.com/tools/18251
-2. Download Battle-Fatigue-Low-HP-Stance-v1.1.0.zip.
-3. Drag and drop the .zip into Unverum.
-4. Enable Battle Fatigue (Low HP Stance) and click Launch Game.
+WHAT YOU NEED:
+- Either Unverum (easiest, 1-click) OR UE4SS (for manual install).
 
-Option 2 — Manual (UE4SS)
-1. Make sure UE4SS (v3.0+) is installed in SparkingZERO\Binaries\Win64\.
-2. Extract ue4ss\BattleFatigue from the .zip into:
-   SparkingZERO\Binaries\Win64\Mods\BattleFatigue\
-3. Launch the game (enabled.txt activates it automatically).
+Option 1 — Unverum (Recommended / Easiest)
+1. Install Unverum: https://gamebanana.com/tools/18251
+   (Unverum can also set up UE4SS for you automatically.)
+2. Drag and drop Battle-Fatigue-Low-HP-Stance-v1.1.0.zip into Unverum.
+3. Check Battle Fatigue (Low HP Stance) and click Launch Game.
+
+Option 2 — Manual Install (UE4SS)
+1. First, install UE4SS (v3.0+):
+   https://github.com/UE4SS-RE/RE-UE4SS/releases
+   Extract the UE4SS files directly into:
+   SparkingZERO\Binaries\Win64\
+   (This is the folder with SparkingZERO-Win64-Shipping.exe.
+    Extracting UE4SS there creates the "Mods" folder for you.)
+2. Open Battle-Fatigue-Low-HP-Stance-v1.1.0.zip, go into "ue4ss\",
+   and copy the "BattleFatigue" folder into:
+   SparkingZERO\Binaries\Win64\Mods\
+3. Final folder check — you MUST have:
+   SparkingZERO\Binaries\Win64\Mods\BattleFatigue\enabled.txt
+   SparkingZERO\Binaries\Win64\Mods\BattleFatigue\Scripts\main.lua
+4. Launch the game (enabled.txt activates the mod automatically).
 
 --------------------------------------------------------------------
   PORTUGUÊS (PT-BR)
 --------------------------------------------------------------------
-Opção 1 — Unverum (Recomendado)
-1. Certifique-se de ter o Unverum instalado:
-   https://gamebanana.com/tools/18251
-2. Baixe o arquivo Battle-Fatigue-Low-HP-Stance-v1.1.0.zip.
-3. Arraste e solte o .zip dentro do Unverum.
-4. Marque Battle Fatigue (Low HP Stance) e clique em Launch Game.
+O QUE VOCÊ PRECISA:
+- Do Unverum (mais fácil, 1 clique) OU do UE4SS (instalação manual).
 
-Opção 2 — Manual (UE4SS)
-1. Certifique-se de que o UE4SS (v3.0+) está instalado em:
+Opção 1 — Unverum (Recomendado / Mais Fácil)
+1. Instale o Unverum: https://gamebanana.com/tools/18251
+   (O próprio Unverum pode configurar o UE4SS automaticamente.)
+2. Arraste e solte Battle-Fatigue-Low-HP-Stance-v1.1.0.zip no Unverum.
+3. Marque Battle Fatigue (Low HP Stance) e clique em Launch Game.
+
+Opção 2 — Instalação Manual (UE4SS)
+1. Primeiro, instale o UE4SS (v3.0+):
+   https://github.com/UE4SS-RE/RE-UE4SS/releases
+   Extraia os arquivos do UE4SS diretamente em:
    SparkingZERO\Binaries\Win64\
-2. Extraia a pasta ue4ss\BattleFatigue do .zip para:
-   SparkingZERO\Binaries\Win64\Mods\BattleFatigue\
-3. Abra o jogo (o arquivo enabled.txt ativa o mod automaticamente).
+   (É a pasta onde fica o SparkingZERO-Win64-Shipping.exe.
+    Ao extrair o UE4SS lá, a pasta "Mods" já será criada.)
+2. Abra o Battle-Fatigue-Low-HP-Stance-v1.1.0.zip, entre em "ue4ss\",
+   e copie a pasta "BattleFatigue" para dentro de:
+   SparkingZERO\Binaries\Win64\Mods\
+3. Conferência final — o caminho DEVE ficar assim:
+   SparkingZERO\Binaries\Win64\Mods\BattleFatigue\enabled.txt
+   SparkingZERO\Binaries\Win64\Mods\BattleFatigue\Scripts\main.lua
+4. Abra o jogo (o enabled.txt ativa o mod automaticamente).
 
 --------------------------------------------------------------------
   ESPAÑOL
 --------------------------------------------------------------------
-Opción 1 — Unverum (Recomendado)
-1. Asegúrate de tener Unverum instalado:
-   https://gamebanana.com/tools/18251
-2. Descarga Battle-Fatigue-Low-HP-Stance-v1.1.0.zip.
-3. Arrastra y suelta el archivo .zip dentro de Unverum.
-4. Activa Battle Fatigue (Low HP Stance) y haz clic en Launch Game.
+QUÉ NECESITAS:
+- Unverum (más fácil, 1 clic) O UE4SS (instalación manual).
 
-Opción 2 — Manual (UE4SS)
-1. Asegúrate de tener UE4SS (v3.0+) instalado en:
+Opción 1 — Unverum (Recomendado / Más Fácil)
+1. Instala Unverum: https://gamebanana.com/tools/18251
+   (Unverum también puede configurar UE4SS automáticamente.)
+2. Arrastra y suelta Battle-Fatigue-Low-HP-Stance-v1.1.0.zip en Unverum.
+3. Activa Battle Fatigue (Low HP Stance) y haz clic en Launch Game.
+
+Opción 2 — Instalación Manual (UE4SS)
+1. Primero, instala UE4SS (v3.0+):
+   https://github.com/UE4SS-RE/RE-UE4SS/releases
+   Extrae los archivos de UE4SS directamente en:
    SparkingZERO\Binaries\Win64\
-2. Extrae la carpeta ue4ss\BattleFatigue del .zip en:
-   SparkingZERO\Binaries\Win64\Mods\BattleFatigue\
-3. Inicia el juego (enabled.txt lo activa automáticamente).
+   (Es la carpeta donde está SparkingZERO-Win64-Shipping.exe.
+    Al extraer UE4SS ahí, se creará la carpeta "Mods".)
+2. Abre Battle-Fatigue-Low-HP-Stance-v1.1.0.zip, entra en "ue4ss\",
+   y copia la carpeta "BattleFatigue" dentro de:
+   SparkingZERO\Binaries\Win64\Mods\
+3. Verificación final — la ruta DEBE quedar así:
+   SparkingZERO\Binaries\Win64\Mods\BattleFatigue\enabled.txt
+   SparkingZERO\Binaries\Win64\Mods\BattleFatigue\Scripts\main.lua
+4. Inicia el juego (enabled.txt activa el mod automáticamente).
